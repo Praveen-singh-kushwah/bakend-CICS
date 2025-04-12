@@ -1,4 +1,4 @@
 from mangum import Mangum
-from main import app  # Import your FastAPI app from main.py
+from main import app
 
 handler = Mangum(app, lifespan="off")
