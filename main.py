@@ -1,20 +1,9 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
 from io import StringIO
 import os
-
-# Define model name
-model_name = "DiKshansHAgrawAl12/IntentClassification"
-
-# Load model and tokenizer once at startup
-print("Loading tokenizer and model...")
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForSequenceClassification.from_pretrained(model_name)
-
-# Create pipeline
-nlp_pipeline = pipeline("text-classification", model=model, tokenizer=tokenizer)
+import requests
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -22,18 +11,36 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # Adjust to your frontend URL (Vite default)
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "https://your-frontend.vercel.app"  # Replace with your frontend URL after deployment
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Hugging Face API configuration
+API_URL = "https://api-inference.huggingface.co/models/DiKshansHAgrawAl12/IntentClassification"
+API_TOKEN = "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"
+
+def query_huggingface(text):
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    payload = {"inputs": text}
+    response = requests.post(API_URL, headers=headers, json=payload)
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=response.json().get("error", "API error"))
+    result = response.json()
+    # Adjust based on expected response structure (e.g., [{"label": "Order Inquiry", "score": 0.95}])
+    return result[0]["label"] if isinstance(result, list) and result else "Unknown"
+
 @app.get("/predict")
 def predict_text(question: str = Query(..., description="Text input for prediction")):
     try:
-        result = nlp_pipeline(question)
-        predicted_label = result[0]["label"]
+        predicted_label = query_huggingface(question)
         return {"input_text": question, "prediction": predicted_label}
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -60,9 +67,11 @@ async def predict_csv(file: UploadFile = File(...)):
         # Perform prediction on each row
         predictions = []
         for text in df["text"].dropna():
-            result = nlp_pipeline(text)
-            predictions.append({"input_text": text, "prediction": result[0]["label"]})
+            predicted_label = query_huggingface(text)
+            predictions.append({"input_text": text, "prediction": predicted_label})
         
         return {"results": predictions}
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
